@@ -180,16 +180,18 @@ class RandomPhaseInvert(nn.Module):
     def __call__(self, signal):
         return -signal if (random.random() < self.p) else signal
 
-class Stereo(nn.Module):
+class RandomMix(nn.Module):
   def __call__(self, signal):
+    """
+    If multichannel, take a random convex combination of the channels
+    """
     signal_shape = signal.shape
-    # Check if it's mono
-    if len(signal_shape) == 1: # s -> 2, s
-        signal = signal.unsqueeze(0).repeat(2, 1)
+    if len(signal_shape) == 1: # s -> 1, s
+        signal = signal.unsqueeze(0)
     elif len(signal_shape) == 2:
-        if signal_shape[0] == 1: #1, s -> 2, s
-            signal = signal.repeat(2, 1)
-        elif signal_shape[0] > 2: #?, s -> 2,s
-            signal = signal[:2, :]    
-
+        n_channel = signal_shape[0]
+        if n_channel > 1: #?, s -> 1, s
+            weights = torch.rand(n_channel, 1).to(signal)
+            weights /= torch.sum(weights)
+            signal = torch.sum(weights*signal, dim=0, keepdims=True)    
     return signal

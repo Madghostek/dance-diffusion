@@ -90,7 +90,7 @@ class DiffusionUncond(pl.LightningModule):
     def __init__(self, global_args):
         super().__init__()
 
-        self.diffusion = DiffusionAttnUnet1D(global_args, io_channels=2, n_attn_layers=4)
+        self.diffusion = DiffusionAttnUnet1D(global_args, io_channels=1, n_attn_layers=4)
         self.diffusion_ema = deepcopy(self.diffusion)
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True, seed=global_args.seed)
         self.ema_decay = global_args.ema_decay

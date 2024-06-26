@@ -4,7 +4,7 @@ from torchaudio import transforms as T
 import random
 from glob import glob
 import os
-from audio_diffusion.utils import Stereo, PadCrop, RandomPhaseInvert
+from audio_diffusion.utils import RandomMix, PadCrop, RandomPhaseInvert
 import tqdm
 from multiprocessing import Pool, cpu_count
 from functools import partial
@@ -17,12 +17,10 @@ class SampleDataset(torch.utils.data.Dataset):
     print(f"Random crop: {global_args.random_crop}")
     
     self.augs = torch.nn.Sequential(
-      PadCrop(global_args.sample_size, randomize=global_args.random_crop),
+      RandomMix(),
+      PadCrop(global_args.sample_size*2, randomize=global_args.random_crop),
       RandomPhaseInvert(),
-    )
-
-    self.encoding = torch.nn.Sequential(
-      Stereo()
+      PadCrop(global_args.sample_size, randomize=global_args.random_crop)
     )
 
     for path in paths:
@@ -85,14 +83,11 @@ class SampleDataset(torch.utils.data.Dataset):
         audio = self.load_file(audio_filename)
 
       #Run augmentations on this sample (including random crop)
+      print("audio.shape", audio.shape)
       if self.augs is not None:
         audio = self.augs(audio)
 
       audio = audio.clamp(-1, 1)
-
-      #Encode the file to assist in prediction
-      if self.encoding is not None:
-        audio = self.encoding(audio)
 
       return (audio, audio_filename)
     except Exception as e:
