@@ -166,7 +166,7 @@ class DemoCallback(pl.Callback):
         super().__init__()
         self.num_demos = global_args.num_demos
         self.demo_samples = global_args.sample_size
-        self.denom_every_n_epochs = global_args.demo_every_n_epochs
+        self.demo_every_n_epochs = global_args.demo_every_n_epochs
         self.demo_steps = global_args.demo_steps
         self.sample_rate = global_args.sample_rate
         self.epoch_num = 0
@@ -175,7 +175,7 @@ class DemoCallback(pl.Callback):
     @torch.no_grad()
     def on_train_epoch_end(self, trainer, module):
         self.epoch_num += 1
-        if self.epoch_num % self.denom_every_n_epochs == 0:
+        if self.epoch_num % self.demo_every_n_epochs == 0:
             noise = torch.randn([self.num_demos, 1, self.demo_samples]).to(module.device)
             try:
                 fakes = sample(module.diffusion_ema, noise, self.demo_steps, 0)
