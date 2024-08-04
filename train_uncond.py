@@ -144,13 +144,13 @@ class DiffusionUncond(pl.LightningModule):
         targets = noise * alphas - reals * sigmas
 
         with torch.cuda.amp.autocast():
-            v = self.diffusion(noised_reals, t)
-            mse_loss = F.mse_loss(v, targets)
-            loss = mse_loss
+            with torch.no_grad():
+                v = self.diffusion(noised_reals, t)
+                mse_loss = F.mse_loss(v, targets)
+                loss = mse_loss
 
         self.log("valid_loss", loss.detach())
         self.log("valid_mse_loss", mse_loss.detach())
-        return loss
 
     def on_before_zero_grad(self, *args, **kwargs):
         decay = 0.95 if self.current_epoch < 25 else self.ema_decay
@@ -166,33 +166,31 @@ class DemoCallback(pl.Callback):
         super().__init__()
         self.num_demos = global_args.num_demos
         self.demo_samples = global_args.sample_size
+        self.denom_every_n_epochs = global_args.demo_every_n_epochs
         self.demo_steps = global_args.demo_steps
         self.sample_rate = global_args.sample_rate
+        self.epoch_num = 0
 
     @rank_zero_only
     @torch.no_grad()
     def on_train_epoch_end(self, trainer, module):
-        print("on train epoch end")
-        noise = torch.randn([self.num_demos, 2, self.demo_samples]).to(module.device)
+        self.epoch_num += 1
+        if self.epoch_num % self.denom_every_n_epochs == 0:
+            noise = torch.randn([self.num_demos, 1, self.demo_samples]).to(module.device)
+            try:
+                fakes = sample(module.diffusion_ema, noise, self.demo_steps, 0)
 
-        try:
-            fakes = sample(module.diffusion_ema, noise, self.demo_steps, 0)
-
-            # Put the demos together
-            fakes = rearrange(fakes, 'b d n -> d (b n)')
-            fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-            print("fakes.shape", fakes.shape)
-            filename = f'demo_{trainer.global_step:08}.wav'
-            torchaudio.save(filename, fakes, self.sample_rate)
-        
-            #log_dict[f'demo_melspec_left'] = wandb.Image(audio_spectrogram_image(fakes))
-
-            print("Logging")
-            trainer.logger.experiment.add_audio("audio_val", fakes, trainer.global_step,
-                                            self.sample_rate)
-            print("Finished logging")
-        except Exception as e:
-            print(f'{type(e).__name__}: {e}', file=sys.stderr)
+                # Put the demos together
+                fakes = rearrange(fakes, 'b d n -> d (b n)')
+                fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+                filename = f'demo_{trainer.global_step:08}.wav'
+                torchaudio.save(filename, fakes, self.sample_rate)
+            
+                #log_dict[f'demo_melspec_left'] = wandb.Image(audio_spectrogram_image(fakes))
+                trainer.logger.experiment.add_audio("audio_val", fakes, trainer.global_step,
+                                                self.sample_rate)
+            except Exception as e:
+                print(f'{type(e).__name__}: {e}', file=sys.stderr)
 
 def main():
 
