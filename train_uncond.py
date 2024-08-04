@@ -122,7 +122,34 @@ class DiffusionUncond(pl.LightningModule):
             loss = mse_loss
 
         self.log("train_loss", loss.detach())
-        self.log("mse_loss", mse_loss.detach())
+        self.log("train_mse_loss", mse_loss.detach())
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        reals = batch[0]
+
+        # Draw uniformly distributed continuous timesteps
+        t = self.rng.draw(reals.shape[0])[:, 0].to(self.device)
+
+        t = get_crash_schedule(t)
+
+        # Calculate the noise schedule parameters for those timesteps
+        alphas, sigmas = get_alphas_sigmas(t)
+
+        # Combine the ground truth images and the noise
+        alphas = alphas[:, None, None]
+        sigmas = sigmas[:, None, None]
+        noise = torch.randn_like(reals)
+        noised_reals = reals * alphas + noise * sigmas
+        targets = noise * alphas - reals * sigmas
+
+        with torch.cuda.amp.autocast():
+            v = self.diffusion(noised_reals, t)
+            mse_loss = F.mse_loss(v, targets)
+            loss = mse_loss
+
+        self.log("valid_loss", loss.detach())
+        self.log("valid_mse_loss", mse_loss.detach())
         return loss
 
     def on_before_zero_grad(self, *args, **kwargs):
@@ -137,23 +164,15 @@ class ExceptionCallback(pl.Callback):
 class DemoCallback(pl.Callback):
     def __init__(self, global_args):
         super().__init__()
-        self.demo_every = global_args.demo_every
         self.num_demos = global_args.num_demos
         self.demo_samples = global_args.sample_size
         self.demo_steps = global_args.demo_steps
         self.sample_rate = global_args.sample_rate
-        self.last_demo_step = -1
 
     @rank_zero_only
     @torch.no_grad()
-    #def on_train_epoch_end(self, trainer, module):
-    def on_train_batch_end(self, trainer, module, outputs, batch, batch_idx):        
-  
-        if (trainer.global_step - 1) % self.demo_every != 0 or self.last_demo_step == trainer.global_step:
-            return
-        
-        self.last_demo_step = trainer.global_step
-    
+    def on_train_epoch_end(self, trainer, module):
+        print("on train epoch end")
         noise = torch.randn([self.num_demos, 2, self.demo_samples]).to(module.device)
 
         try:
@@ -187,9 +206,13 @@ def main():
     print('Using device:', device)
     torch.manual_seed(args.seed)
 
-    train_set = SampleDataset([args.training_dir], args)
+    train_set = SampleDataset([args.training_dir], args, train=True)
     train_dl = data.DataLoader(train_set, args.batch_size, shuffle=True,
                                num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True)
+    valid_dl = None
+    if len(args.validation_dir) > 0:
+        valid_set = SampleDataset([args.validation_dir], args, train=False)
+        valid_dl = data.DataLoader(valid_set, args.batch_size, False, num_workers=args.num_workers)
     tensorboard_logger=pl.loggers.TensorBoardLogger(
         args.log_path,
         name=args.name,
@@ -214,7 +237,7 @@ def main():
         max_epochs=10000000,
     )
 
-    diffusion_trainer.fit(diffusion_model, train_dl, ckpt_path=args.ckpt_path)
+    diffusion_trainer.fit(diffusion_model, train_dl, valid_dl, ckpt_path=args.ckpt_path)
 
 if __name__ == '__main__':
     main()

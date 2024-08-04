@@ -195,3 +195,19 @@ class RandomMix(nn.Module):
             weights /= torch.sum(weights)
             signal = torch.sum(weights*signal, dim=0, keepdims=True)    
     return signal
+  
+class EqualMix(nn.Module):
+  def __call__(self, signal):
+    """
+    If multichannel, take a an equal combination of the channels
+    """
+    signal_shape = signal.shape
+    if len(signal_shape) == 1: # s -> 1, s
+        signal = signal.unsqueeze(0)
+    elif len(signal_shape) == 2:
+        n_channel = signal_shape[0]
+        if n_channel > 1: #?, s -> 1, s
+            weights = torch.ones(n_channel, 1).to(signal)
+            weights /= n_channel
+            signal = torch.sum(weights*signal, dim=0, keepdims=True)    
+    return signal

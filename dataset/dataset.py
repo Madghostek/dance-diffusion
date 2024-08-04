@@ -4,24 +4,30 @@ from torchaudio import transforms as T
 import random
 from glob import glob
 import os
-from audio_diffusion.utils import RandomMix, PadCrop, RandomPhaseInvert
+from audio_diffusion.utils import RandomMix, EqualMix, PadCrop, RandomPhaseInvert
 import tqdm
 from multiprocessing import Pool, cpu_count
 from functools import partial
 
 class SampleDataset(torch.utils.data.Dataset):
-  def __init__(self, paths, global_args):
+  def __init__(self, paths, global_args, train=True):
     super().__init__()
     self.filenames = []
 
     print(f"Random crop: {global_args.random_crop}")
+
+    augs = []
+    if train:
+      augs = [      
+        RandomMix(),
+        PadCrop(global_args.sample_size*2, randomize=global_args.random_crop),
+        RandomPhaseInvert(),
+        PadCrop(global_args.sample_size, randomize=global_args.random_crop)
+      ]
+    else:
+      augs = [EqualMix(), PadCrop(global_args.sample_size, randomize=False)]
     
-    self.augs = torch.nn.Sequential(
-      RandomMix(),
-      PadCrop(global_args.sample_size*2, randomize=global_args.random_crop),
-      RandomPhaseInvert(),
-      PadCrop(global_args.sample_size, randomize=global_args.random_crop)
-    )
+    self.augs = torch.nn.Sequential(*augs)
 
     for path in paths:
       for ext in ['wav','flac','ogg','aiff','aif','mp3']:
@@ -83,7 +89,7 @@ class SampleDataset(torch.utils.data.Dataset):
         audio = self.load_file(audio_filename)
 
       #Run augmentations on this sample (including random crop)
-      print("audio.shape", audio.shape)
+      #print("audio.shape", audio.shape)
       if self.augs is not None:
         audio = self.augs(audio)
 
