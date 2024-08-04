@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from prefigure.prefigure import get_all_args, push_wandb_config
+from prefigure.prefigure import get_all_args
 from contextlib import contextmanager
 from copy import deepcopy
 import math
@@ -16,7 +16,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 from einops import rearrange
 import torchaudio
-import wandb
+from torch.utils.tensorboard import SummaryWriter
 
 from dataset.dataset import SampleDataset
 
@@ -121,12 +121,8 @@ class DiffusionUncond(pl.LightningModule):
             mse_loss = F.mse_loss(v, targets)
             loss = mse_loss
 
-        log_dict = {
-            'train/loss': loss.detach(),
-            'train/mse_loss': mse_loss.detach(),
-        }
-
-        self.log_dict(log_dict, prog_bar=True, on_step=True)
+        self.log("train_loss", loss.detach())
+        self.log("mse_loss", mse_loss.detach())
         return loss
 
     def on_before_zero_grad(self, *args, **kwargs):
@@ -165,21 +161,17 @@ class DemoCallback(pl.Callback):
 
             # Put the demos together
             fakes = rearrange(fakes, 'b d n -> d (b n)')
-
-            log_dict = {}
-            
-            filename = f'demo_{trainer.global_step:08}.wav'
             fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+            print("fakes.shape", fakes.shape)
+            filename = f'demo_{trainer.global_step:08}.wav'
             torchaudio.save(filename, fakes, self.sample_rate)
-
-
-            log_dict[f'demo'] = wandb.Audio(filename,
-                                                sample_rate=self.sample_rate,
-                                                caption=f'Demo')
         
-            log_dict[f'demo_melspec_left'] = wandb.Image(audio_spectrogram_image(fakes))
+            #log_dict[f'demo_melspec_left'] = wandb.Image(audio_spectrogram_image(fakes))
 
-            trainer.logger.experiment.log(log_dict, step=trainer.global_step)
+            print("Logging")
+            trainer.logger.experiment.add_audio("audio_val", fakes, trainer.global_step,
+                                            self.sample_rate)
+            print("Finished logging")
         except Exception as e:
             print(f'{type(e).__name__}: {e}', file=sys.stderr)
 
@@ -198,16 +190,16 @@ def main():
     train_set = SampleDataset([args.training_dir], args)
     train_dl = data.DataLoader(train_set, args.batch_size, shuffle=True,
                                num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True)
-    wandb_logger = pl.loggers.WandbLogger(project=args.name, log_model='all' if args.save_wandb=='all' else None)
+    tensorboard_logger=pl.loggers.TensorBoardLogger(
+        args.log_path,
+        name=args.name,
+    ),
 
     exc_callback = ExceptionCallback()
     ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, save_top_k=-1, dirpath=save_path)
     demo_callback = DemoCallback(args)
 
     diffusion_model = DiffusionUncond(args)
-
-    wandb_logger.watch(diffusion_model)
-    push_wandb_config(wandb_logger, args)
 
     diffusion_trainer = pl.Trainer(
         devices=args.num_gpus,
@@ -217,7 +209,7 @@ def main():
         precision=16,
         accumulate_grad_batches=args.accum_batches, 
         callbacks=[ckpt_callback, demo_callback, exc_callback],
-        logger=wandb_logger,
+        logger=tensorboard_logger,
         log_every_n_steps=1,
         max_epochs=10000000,
     )
