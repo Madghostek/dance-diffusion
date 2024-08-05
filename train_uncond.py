@@ -184,11 +184,7 @@ class DemoCallback(pl.Callback):
                 fakes = rearrange(fakes, 'b d n -> d (b n)')
                 trainer.logger.experiment.add_audio("audio_val", fakes.cpu(), trainer.global_step,
                                                 self.sample_rate)
-                fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-                filename = f'demo_{trainer.global_step:08}.wav'
-                torchaudio.save(filename, fakes, self.sample_rate)
-            
-                #log_dict[f'demo_melspec_left'] = wandb.Image(audio_spectrogram_image(fakes))
+                trainer.logger.experiment.add_image("audio_specgram", audio_spectrogram_image(fakes.detach().cpu(), sample_rate=self.sample_rate), dataformats="HWC")
                 
             except Exception as e:
                 print(f'{type(e).__name__}: {e}', file=sys.stderr)
