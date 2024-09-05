@@ -7,18 +7,9 @@ import random
 import math
 from torch import optim
 
-def append_dims(x, target_dims):
-    """Appends dimensions to the end of a tensor until it has target_dims dimensions."""
-    dims_to_append = target_dims - x.ndim
-    if dims_to_append < 0:
-        raise ValueError(f'input has {x.ndim} dims but target_dims is {target_dims}, which is less')
-    return x[(...,) + (None,) * dims_to_append]
-
-
-def n_params(module):
-    """Returns the number of trainable parameters in a module."""
-    return sum(p.numel() for p in module.parameters())
-
+############################################################
+##                Utilities for training
+############################################################
 
 @contextmanager
 def train_mode(model, mode=True):
@@ -145,19 +136,34 @@ class InverseLR(optim.lr_scheduler._LRScheduler):
                 for base_lr in self.base_lrs]
 
 
-# Define the diffusion noise schedule
+
+############################################################
+##       Utilities for the diffusion noise schedule
+############################################################
 def get_alphas_sigmas(t):
+    """Returns the scaling factors for the clean image (alpha) and for the
+    noise (sigma), given a timestep."""
     return torch.cos(t * math.pi / 2), torch.sin(t * math.pi / 2)
 
-def append_dims(x, target_dims):
-    """Appends dimensions to the end of a tensor until it has target_dims dimensions."""
-    dims_to_append = target_dims - x.ndim
-    if dims_to_append < 0:
-        raise ValueError(f'input has {x.ndim} dims but target_dims is {target_dims}, which is less')
-    return x[(...,) + (None,) * dims_to_append]
+def get_crash_schedule(t):
+    sigma = torch.sin(t * math.pi / 2) ** 2
+    alpha = (1 - sigma ** 2) ** 0.5
+    return alpha_sigma_to_t(alpha, sigma)
 
-def expand_to_planes(input, shape):
-    return input[..., None].repeat([1, 1, shape[2]])
+def t_to_alpha_sigma(t):
+    """Returns the scaling factors for the clean image and for the noise, given
+    a timestep."""
+    return torch.cos(t * math.pi / 2), torch.sin(t * math.pi / 2)
+
+def alpha_sigma_to_t(alpha, sigma):
+    """Returns a timestep, given the scaling factors for the clean image and for
+    the noise."""
+    return torch.atan2(sigma, alpha) / math.pi * 2
+
+
+############################################################
+##              Data Augmentation Tools
+############################################################
 
 class PadCrop(nn.Module):
     def __init__(self, n_samples, randomize=True):
@@ -241,3 +247,112 @@ class TempoStretch(nn.Module):
             ret = pyrb.time_stretch(signal.detach().cpu().numpy().T, self.sr, fac)
             ret = torch.from_numpy(ret.T).to(signal)
         return ret
+    
+
+
+
+############################################################
+##       Utilities for inference and style transfer
+############################################################
+
+class DiffusionUncondInfer(nn.Module):
+    def __init__(self, global_args):
+        super().__init__()
+        from .models import DiffusionAttnUnet1D
+        from copy import deepcopy
+        self.diffusion = DiffusionAttnUnet1D(global_args, io_channels=1, n_attn_layers=4)
+        self.diffusion_ema = deepcopy(self.diffusion)
+        self.rng = torch.quasirandom.SobolEngine(1, scramble=True, seed=global_args.seed)
+
+def load_model_for_synthesis(ckpt_path, sample_size, sample_rate, device, latent_dim=0, seed=42):
+    """
+    Load a pretrained model for synthesis and style transfer
+    """
+    class Object(object):
+        pass
+    args = Object()
+    args.sample_size = sample_size
+    args.sample_rate = sample_rate
+    args.latent_dim = latent_dim
+    args.seed = seed
+    model = DiffusionUncondInfer(args)
+    model.load_state_dict(torch.load(ckpt_path)["state_dict"])
+    model = model.requires_grad_(False).to(device)
+
+    del model.diffusion
+    return model.diffusion_ema
+
+
+def do_style_transfer(model, audio_sample, steps, noise_level, device, eta=0):
+    """
+    DiffusionUncondInfer: model
+        Model to use
+    audio_sample: torch.tensor(batch, channel, samples)
+        Original audio samples to send through the style transfer
+    steps: int
+        Maximum number of steps to take.  Can be fewer if noise_level < 1
+    noise_level: float
+        Initial noise level to apply.  The closer this is to 0, the more 
+        the audio will sound like the original.  The closer it is to 1, the
+        more the audio will sound like the model
+    device: str
+        Device to use
+    eta: float
+        Extra noise to use in diffusion    
+    """
+    from diffusion import sampling
+    t = torch.linspace(0, 1, steps + 1, device=device)
+    step_list = get_crash_schedule(t)
+    step_list = step_list[step_list < noise_level]
+
+    alpha, sigma = t_to_alpha_sigma(step_list[-1])
+
+    noised = torch.randn(audio_sample.shape, device=device)
+    noised = audio_sample * alpha + noised * sigma
+    noise = noised
+
+    return sampling.sample(model, noise, step_list.flip(0)[:-1], eta, {})
+
+
+############################################################
+##              Other Utilities
+############################################################
+
+def expand_to_planes(input, shape):
+    return input[..., None].repeat([1, 1, shape[2]])
+
+def load_to_device(path, sr, device):
+    """
+    Load audio to a device at the appropriate sample rate
+
+    Parameters
+    ----------
+    path: str
+        Path to audio
+    sr: int
+        Audio sample rate
+    device: str
+        Device to which to load the audio
+    
+    Returns
+    -------
+    Loaded audio
+    """
+    import torchaudio
+    audio, file_sr = torchaudio.load(path)
+    if sr != file_sr:
+      audio = torchaudio.transforms.Resample(file_sr, sr)(audio)
+    audio = audio.to(device)
+    return audio
+
+def append_dims(x, target_dims):
+    """Appends dimensions to the end of a tensor until it has target_dims dimensions."""
+    dims_to_append = target_dims - x.ndim
+    if dims_to_append < 0:
+        raise ValueError(f'input has {x.ndim} dims but target_dims is {target_dims}, which is less')
+    return x[(...,) + (None,) * dims_to_append]
+
+
+def n_params(module):
+    """Returns the number of trainable parameters in a module."""
+    return sum(p.numel() for p in module.parameters())

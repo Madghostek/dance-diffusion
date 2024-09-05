@@ -1,45 +1,26 @@
 #!/usr/bin/env python3
 
 from prefigure.prefigure import get_all_args
-from contextlib import contextmanager
 from copy import deepcopy
 import math
-from pathlib import Path
 
 import sys
 import torch
-from torch import optim, nn
+from torch import optim
 from torch.nn import functional as F
 from torch.utils import data
 from tqdm import trange
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 from einops import rearrange
-import torchaudio
-from torch.utils.tensorboard import SummaryWriter
 
 from dataset.dataset import SampleDataset
 
 from audio_diffusion.models import DiffusionAttnUnet1D
-from audio_diffusion.utils import ema_update
+from audio_diffusion.utils import ema_update, get_alphas_sigmas, get_crash_schedule
 from viz.viz import audio_spectrogram_image
 
 
-# Define the noise schedule and sampling loop
-def get_alphas_sigmas(t):
-    """Returns the scaling factors for the clean image (alpha) and for the
-    noise (sigma), given a timestep."""
-    return torch.cos(t * math.pi / 2), torch.sin(t * math.pi / 2)
-
-def get_crash_schedule(t):
-    sigma = torch.sin(t * math.pi / 2) ** 2
-    alpha = (1 - sigma ** 2) ** 0.5
-    return alpha_sigma_to_t(alpha, sigma)
-
-def alpha_sigma_to_t(alpha, sigma):
-    """Returns a timestep, given the scaling factors for the clean image and for
-    the noise."""
-    return torch.atan2(sigma, alpha) / math.pi * 2
 
 @torch.no_grad()
 def sample(model, x, steps, eta):
