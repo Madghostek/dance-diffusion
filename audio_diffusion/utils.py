@@ -211,3 +211,33 @@ class EqualMix(nn.Module):
             weights /= n_channel
             signal = torch.sum(weights*signal, dim=0, keepdims=True)    
     return signal
+
+class TempoStretch(nn.Module):
+    def __init__(self, sr, tmin=0.8, tmax=1.2, frac=0.5):
+        """
+        Parameters
+        ----------
+        sr: int
+            Audio sample rate
+        tmin: float
+            Minimum tempo warp ratio
+        tmax: float
+            Maximum tempo warp ratio
+        frac: float
+            Proportion of the time to warp the tempo
+        """
+        super().__init__()
+        self.sr = sr
+        self.tmin = tmin
+        self.tmax = tmax
+        self.frac = frac
+
+    def __call__(self, signal):
+        import numpy as np
+        ret = signal
+        if np.random.rand() < self.frac:
+            import pyrubberband as pyrb
+            fac = self.tmin + (self.tmax-self.tmin)*np.random.rand()
+            ret = pyrb.time_stretch(signal.detach().cpu().numpy().T, self.sr, fac)
+            ret = torch.from_numpy(ret.T).to(signal)
+        return ret
