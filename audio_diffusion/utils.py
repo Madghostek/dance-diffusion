@@ -258,7 +258,7 @@ class TempoStretch(nn.Module):
 class DiffusionUncondInfer(nn.Module):
     def __init__(self, global_args):
         super().__init__()
-        from .models import DiffusionAttnUnet1D
+        from models import DiffusionAttnUnet1D
         from copy import deepcopy
         self.diffusion = DiffusionAttnUnet1D(global_args, io_channels=1, n_attn_layers=4)
         self.diffusion_ema = deepcopy(self.diffusion)
