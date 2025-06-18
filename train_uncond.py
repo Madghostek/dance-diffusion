@@ -182,7 +182,7 @@ def main():
     print('Using device:', device)
     torch.manual_seed(args.seed)
 
-    train_set = SampleDataset([args.training_dir], args, train=True)
+    train_set = torch.utils.data.Subset(SampleDataset([args.training_dir], args, train=True),range(10))
     train_dl = data.DataLoader(train_set, args.batch_size, shuffle=True,
                                num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True)
     valid_dl = None

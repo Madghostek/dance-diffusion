@@ -2,8 +2,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from blocks import SkipBlock, FourierFeatures, SelfAttention1d, ResConvBlock, Downsample1d, Upsample1d
-from utils import append_dims, expand_to_planes
+from .blocks import SkipBlock, FourierFeatures, SelfAttention1d, ResConvBlock, Downsample1d, Upsample1d
+from .utils import append_dims, expand_to_planes
 
 class DiffusionAttnUnet1D(nn.Module):
     def __init__(
